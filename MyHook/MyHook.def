@@ -1,0 +1,5 @@
+EXPORTS
+	CallWndProc
+	WindowProc
+	InstallHook
+	RemoveHook
