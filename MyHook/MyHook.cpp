@@ -13,15 +13,16 @@ using namespace std;
 static HHOOK hMyHook = NULL;
 static HMODULE	hInstance = NULL;
 CRITICAL_SECTION csGlobal;
+UINT	WM_MYHOOKMSG = RegisterWindowMessage(_T("MyHook's Message"));
 const static TCHAR strMyTools[] = _T("MyTools");
-UINT	WM_MYHOOKMSG;
+
+const int MH_REMOVE = 0x0;	//for removed
+const int MH_INSTALL = 0x1;	// for installed
+const int SC_TOPMOST = 0x430;	// create on 2014-02-11
+const int SC_DISABLE = 0x2130;	// create on 2014-02-13
 #pragma data_seg()
 #pragma comment(linker, "/section:SHARED,RWS")
 
-const int MH_REMOVED = 0x0;	//for removed
-const int MH_INSTALLED = 0x1;	// for installed
-const int SC_TOPMOST = 0x430;	// create on 2014-02-11
-const int SC_REMOVEHOOK = 0x2130;	// create on 2014-02-13
 
 BOOL APIENTRY DllMain(HMODULE hModule,
 	DWORD  ul_reason_for_call,
@@ -31,9 +32,10 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	switch (ul_reason_for_call)
 	{
 	case DLL_PROCESS_ATTACH:
+		OutputDebugString(_T("DLL_PROCESS_ATTACH\n"));
 		if (hInstance == NULL) {
 			hInstance = hModule;
-			WM_MYHOOKMSG = RegisterWindowMessage(_T("MyHook's Message"));
+			InitializeCriticalSectionAndSpinCount(&csGlobal, 1000);
 		}
 		break;
 	case DLL_THREAD_ATTACH:
@@ -44,40 +46,31 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	return TRUE;
 }
 
-BOOL CALLBACK AttachMenu(_In_ HWND hwnd) {
-	HMENU hmenuSys = GetSystemMenu(hwnd, 0);
-	if (hmenuSys == NULL)
-		return FALSE;
-	AppendMenu(hmenuSys, MF_SEPARATOR, 0, NULL);
-	AppendMenu(hmenuSys, MF_STRING, SC_TOPMOST, TEXT("Set TopMost"));
-	return TRUE;
-}
-
-//LRESULT CALLBACK RegisterWnd(_In_ HWND hwnd)
-//{
-//	SetProp(hwnd, strMyTools, (HANDLE)GetWindowLongPtr(hwnd, GWLP_WNDPROC));
-//	SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)WindowProc);
-//	AttachMenu(hwnd);
-//	return 0;
-//}
-
 MYHOOK_API LRESULT CALLBACK CallWndProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPARAM lParam)
 {
 	if (nCode == HC_ACTION) {
-		LPCWPSTRUCT lpmsg = (LPCWPSTRUCT)lParam;
-		if (lpmsg->message == WM_SHOWWINDOW && lpmsg->lParam == 0) {
-			if (GetParent(lpmsg->hwnd) == NULL && GetWindow(lpmsg->hwnd, GW_OWNER) == NULL && lpmsg->wParam != 0
-				&& ((GetWindowLong(lpmsg->hwnd, GWL_EXSTYLE)&(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)) == 0)) {
-#ifdef _DEBUG
-				TCHAR	tMessage[256];
-				TCHAR	tClassName[128];
-				GetClassName(lpmsg->hwnd, tClassName, 128);
-				swprintf_s(tMessage, 256, _T("Register: %s.\r\n"), tClassName);
-				OutputDebugString(tMessage);
-#endif
-				//				RegisterWnd(lpmsg->hwnd);
+		OutputDebugString(_T("HC_ACTION\n"));
+		const LPCWPSTRUCT lpmsg = (LPCWPSTRUCT)lParam;
+		if ((lpmsg->message == WM_MYHOOKMSG &&lpmsg->wParam == MH_INSTALL) || (lpmsg->message == WM_CREATE&&lpmsg->hwnd == GetAncestor(lpmsg->hwnd, GA_ROOT))) {
+			OutputDebugString(_T("MH_INSTALLED\n"));
+			SetProp(lpmsg->hwnd, strMyTools, (HANDLE)GetWindowLongPtr(lpmsg->hwnd, GWLP_WNDPROC));
+			SetWindowLongPtr(lpmsg->hwnd, GWLP_WNDPROC, (LONG_PTR)WindowProc);
+			HMENU hmenuSys = GetSystemMenu(lpmsg->hwnd, 0);
+			if (hmenuSys != NULL) {
+				LPTSTR	lpMenuTxt;
+				AppendMenu(hmenuSys, MF_SEPARATOR, 0, NULL);
+				LoadString(hInstance, IDS_SETTOPMOST, (LPTSTR)&lpMenuTxt, 0);
+				AppendMenu(hmenuSys, MF_STRING, SC_TOPMOST, lpMenuTxt);
+				LoadString(hInstance, IDS_DISABLE, (LPTSTR)&lpMenuTxt, 0);
+				AppendMenu(hmenuSys, MF_STRING | MF_UNCHECKED, SC_DISABLE, lpMenuTxt);
 			}
 		}
+		else if ((lpmsg->message == WM_MYHOOKMSG &&lpmsg->wParam == MH_REMOVE) {
+			HMENU hmenuSys = GetSystemMenu(lpmsg->hwnd, 0);
+			if (hmenuSys != NULL) {
+				LPTSTR	lpMenuTxt;
+				LoadString(hInstance, IDS_DISABLE, (LPTSTR)&lpMenuTxt, 0);
+			}
 	}
 	return CallNextHookEx(hMyHook, nCode, wParam, lParam);
 }
@@ -85,27 +78,21 @@ MYHOOK_API LRESULT CALLBACK CallWndProc(_In_ int nCode, _In_ WPARAM wParam, _In_
 MYHOOK_API LRESULT CALLBACK WindowProc(_In_ HWND hwnd, _In_ UINT uMsg, _In_ WPARAM wParam, _In_ LPARAM lParam) {
 	WNDPROC proc = (WNDPROC)GetProp(hwnd, strMyTools);
 	switch (uMsg) {
-	case WM_CREATE:
-		break;
 	case WM_SYSCOMMAND:
 		switch (wParam & 0xFFF0) {
 		case SC_TOPMOST:
 			SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
 			break;
-		case SC_REMOVEHOOK:
-#ifdef _DEBUG
-			TCHAR	tMessage[256];
-			swprintf_s(tMessage, 256, _T("Remove subclass proc address: %d.\r\n"), proc);
-			OutputDebugString(tMessage);
-#endif
-			SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG)proc);
-			RemoveProp(hwnd, strMyTools);
+		case SC_DISABLE:
+
+			//	SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG)proc);
+			//	RemoveProp(hwnd, strMyTools);
 			break;
 		}
 		break;
 	case WM_NCDESTROY:
 		RemoveProp(hwnd, strMyTools);
-		SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG)proc);	// WM_NCDESTROY实际上是最后一个消息，这行代码只是稳妥起见
+		SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)proc);	// WM_NCDESTROY实际上是最后一个消息，这行代码只是稳妥起见
 		break;
 	}
 
@@ -128,7 +115,7 @@ void ErrorNotify(LPCSTR lpszFunction) {
 		0, NULL);
 	LoadString(hInstance, IDS_FAILED_WITH_ERROR, (LPTSTR)&lpFormatBuf, 0);
 	lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT,
-		(lstrlen((LPCTSTR)lpMsgBuf) + lstrlen((LPCTSTR)lpszFunction) + lstrlen((LPCTSTR)lpFormatBuf) + (10 - 6) /*strlen('0x12345678')-strlen('%d%s%s')*/ + 1 /*for NUL*/) * sizeof(TCHAR));
+		(lstrlen((LPCTSTR)lpMsgBuf) + lstrlen((LPCTSTR)lpszFunction) + lstrlen((LPCTSTR)lpFormatBuf) + 1 /*strlen('12345678')-strlen('%s%lX%s')*/ + 1 /*for NUL*/) * sizeof(TCHAR));
 	StringCchPrintf((LPTSTR)lpDisplayBuf,
 		LocalSize(lpDisplayBuf) / sizeof(TCHAR),
 		(LPTSTR)lpFormatBuf, lpszFunction, dwError, lpMsgBuf);
@@ -138,44 +125,37 @@ void ErrorNotify(LPCSTR lpszFunction) {
 	LocalFree(lpDisplayBuf);
 }
 
-// 参数用来指定调用者进程的窗口，用来接受通知信息，存储被钩窗口的信息
 MYHOOK_API LRESULT CALLBACK InstallHook()
 {
+	OutputDebugString(_T("InstallHook\n"));
 	__try {
 		EnterCriticalSection(&csGlobal);
 		if (!hMyHook) {
 			hMyHook = SetWindowsHookEx(WH_CALLWNDPROC, CallWndProc, hInstance, 0);
-			if (hMyHook == NULL) {
+			if (hMyHook != NULL)
+				PostMessage(HWND_BROADCAST, WM_MYHOOKMSG, MH_INSTALL, 0);
+			else
 				ErrorNotify("InstallHook");
-			}
 		}
 	}
 	__finally {
 		LeaveCriticalSection(&csGlobal);
 	}
-	return (LONG)hMyHook;
-}
-
-BOOL CALLBACK EnumWindowsProc(_In_ HWND hwnd, _In_ LPARAM lParam)
-{
-	if (GetProp(hwnd, strMyTools) != NULL) {
-		SendMessage(hwnd, WM_SYSCOMMAND, SC_REMOVEHOOK, 0);
-	}
-	return TRUE;
+	return (LONG_PTR)hMyHook;
 }
 
 MYHOOK_API BOOL CALLBACK RemoveHook()
 {
+	OutputDebugString(_T("RemoveHook\n"));
 	BOOL bval = FALSE;
 	__try {
 		EnterCriticalSection(&csGlobal);
 
 		if (hMyHook) {
-			PostMessage(HWND_BROADCAST, WM_REMOVEHOOK, 0, 0L);
-			EnumWindows(EnumWindowsProc, 0);
+			SendMessage(HWND_BROADCAST, WM_MYHOOKMSG, MH_REMOVE, 0 );
 			bval = UnhookWindowsHookEx(hMyHook);
 			if (bval)
-				hMyHook = FALSE;
+				hMyHook = NULL;
 			else {
 				ErrorNotify("RemoveHook");
 			}

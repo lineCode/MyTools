@@ -18,3 +18,5 @@ MYHOOK_API BOOL CALLBACK RemoveHook();
 #ifdef _cplusplus
 }
 #endif
+
+
